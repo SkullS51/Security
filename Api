@@ -1,3 +1,4 @@
 api/check.py
 ​/setup
 ​/check-hash:
+pip install fastapi
