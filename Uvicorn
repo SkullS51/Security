@@ -1,1 +1,2 @@
 pip install uvicorn fastapi psycopg2-binary
+http://127.0.0.1:8000/docs
