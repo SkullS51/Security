@@ -16,7 +16,8 @@ import {
   ChevronUp,
   Globe,
   Database,
-  Search
+  Search,
+  Upload
 } from 'lucide-react';
 
 // --- Types ---
@@ -39,6 +40,8 @@ interface AnalysisState {
 
 // --- Configuration ---
 
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+
 const SYSTEM_INSTRUCTION = `
 You are ScamShield AI, an advanced cyber-security analyst. 
 Your job is to analyze text, emails, or messages for scam indicators.
@@ -58,6 +61,7 @@ const App = () => {
   // Input State
   const [inputText, setInputText] = useState('');
   const [activeTab, setActiveTab] = useState<'text' | 'file' | 'hash'>('text');
+  const [uploadError, setUploadError] = useState<string | null>(null);
   
   // Config State
   const [apiUrl, setApiUrl] = useState('http://localhost:8000');
@@ -78,6 +82,55 @@ const App = () => {
     const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setUploadError(null);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Check File Size
+    if (file.size > MAX_FILE_SIZE) {
+      setUploadError(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Limit is 5MB.`);
+      // Reset input so user can select same file again if they want to trigger change
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    
+    reader.onload = (event) => {
+      const text = event.target?.result;
+      
+      if (typeof text !== 'string') {
+        setUploadError("Unable to read file content as text.");
+        return;
+      }
+
+      // Basic check for binary content (null bytes often indicate binary)
+      if (text.includes('\0')) {
+        setUploadError("File appears to be binary. Please upload text-based files (.txt, .eml, .json, etc).");
+        return;
+      }
+
+      setInputText(text);
+      // Automatically switch to text tab to review the content
+      setActiveTab('text');
+    };
+
+    reader.onerror = () => {
+      setUploadError("Error reading file. It may be corrupted or unreadable.");
+    };
+
+    try {
+      reader.readAsText(file);
+    } catch (err) {
+      setUploadError("Failed to initiate file upload.");
+      console.error(err);
+    }
+    
+    // Reset input
+    e.target.value = '';
   };
 
   const checkLocalApi = async (hash: string): Promise<ScanResult> => {
@@ -233,6 +286,11 @@ const App = () => {
     }
   };
 
+  const handleTabChange = (tab: 'text' | 'file' | 'hash') => {
+    setActiveTab(tab);
+    setUploadError(null);
+  };
+
   // --- Render Components ---
 
   const renderStatusBadge = (result: ScanResult | null) => {
@@ -312,13 +370,19 @@ const App = () => {
             {/* Tabs */}
             <div className="flex border-b border-slate-800">
               <button 
-                onClick={() => setActiveTab('text')}
+                onClick={() => handleTabChange('text')}
                 className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${activeTab === 'text' ? 'bg-slate-800 text-white border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}
               >
                 <FileText size={16} /> Text Content
               </button>
               <button 
-                onClick={() => setActiveTab('hash')}
+                onClick={() => handleTabChange('file')}
+                className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${activeTab === 'file' ? 'bg-slate-800 text-white border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                <Upload size={16} /> Upload File
+              </button>
+              <button 
+                onClick={() => handleTabChange('hash')}
                 className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 transition-all ${activeTab === 'hash' ? 'bg-slate-800 text-white border-b-2 border-emerald-500' : 'text-slate-500 hover:text-slate-300'}`}
               >
                 <Hash size={16} /> Direct Hash
@@ -326,17 +390,57 @@ const App = () => {
             </div>
 
             <div className="p-6">
-              <textarea
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder={activeTab === 'text' ? "Paste suspicious email, message, or text here..." : "Paste SHA-256 hash here..."}
-                className="w-full h-64 bg-slate-950 border border-slate-800 rounded-lg p-4 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 resize-none font-mono text-sm transition-all"
-              />
+              {activeTab === 'file' ? (
+                <div className={`w-full h-64 border-2 border-dashed rounded-lg flex flex-col items-center justify-center bg-slate-950/50 transition-colors group ${uploadError ? 'border-rose-500/50 bg-rose-950/10' : 'border-slate-800 hover:bg-slate-900/50'}`}>
+                  {uploadError ? (
+                    <div className="flex flex-col items-center text-center p-6 animate-in fade-in zoom-in duration-300">
+                      <div className="bg-rose-500/10 p-4 rounded-full mb-4 border border-rose-500/20">
+                        <AlertTriangle size={24} className="text-rose-500" />
+                      </div>
+                      <p className="text-rose-400 font-medium mb-1">Upload Failed</p>
+                      <p className="text-rose-300/70 text-sm mb-6 max-w-xs">{uploadError}</p>
+                      <button 
+                        onClick={() => setUploadError(null)}
+                        className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded transition-colors border border-slate-700"
+                      >
+                        Try Again
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="bg-slate-900 p-4 rounded-full mb-4 group-hover:bg-slate-800 transition-colors border border-slate-800">
+                        <Upload size={24} className="text-emerald-500" />
+                      </div>
+                      <p className="text-slate-300 font-medium mb-1">Upload a file to scan</p>
+                      <p className="text-slate-500 text-xs mb-6">Supported: .txt, .eml, .msg, .log, .json (Max 5MB)</p>
+                      <label className="cursor-pointer relative group">
+                        <div className="absolute -inset-0.5 bg-gradient-to-r from-emerald-600 to-teal-600 rounded-lg blur opacity-50 group-hover:opacity-100 transition duration-200"></div>
+                        <span className="relative block bg-slate-900 text-white px-6 py-2.5 rounded-lg text-sm font-semibold border border-slate-800 hover:bg-slate-800 transition-all flex items-center gap-2">
+                          <FileText size={14} className="text-emerald-400"/> Browse Files
+                        </span>
+                        <input 
+                          type="file" 
+                          className="hidden" 
+                          accept=".txt,.eml,.msg,.log,.json"
+                          onChange={handleFileUpload}
+                        />
+                      </label>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <textarea
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder={activeTab === 'text' ? "Paste suspicious email, message, or text here..." : "Paste SHA-256 hash here..."}
+                  className="w-full h-64 bg-slate-950 border border-slate-800 rounded-lg p-4 text-slate-300 placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500/50 resize-none font-mono text-sm transition-all"
+                />
+              )}
               
               <div className="mt-4 flex justify-end">
                 <button
                   onClick={handleScan}
-                  disabled={state.isAnalyzing || !inputText}
+                  disabled={state.isAnalyzing || !inputText || !!uploadError}
                   className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2 rounded-lg font-semibold shadow-lg shadow-emerald-900/20 flex items-center gap-2 transition-all"
                 >
                   {state.isAnalyzing ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
