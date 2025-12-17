@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { GoogleGenAI, Type } from "@google/genai";
+import { Analytics } from "@vercel/analytics/react";
 import { 
   Shield, 
   AlertTriangle, 
@@ -624,4 +625,4 @@ const App = () => {
 };
 
 const root = createRoot(document.getElementById('root')!);
-root.render(<App />);
+root.render(<><App /><Analytics /></>);
