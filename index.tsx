@@ -17,7 +17,10 @@ import {
   Globe,
   Database,
   Search,
-  Upload
+  Upload,
+  Smartphone,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 
 // --- Types ---
@@ -65,6 +68,7 @@ const App = () => {
   
   // Config State
   const [apiUrl, setApiUrl] = useState('http://localhost:8000');
+  const [dbMode, setDbMode] = useState<'browser' | 'server'>('browser'); // Default to browser for tablet/mobile
   const [showSettings, setShowSettings] = useState(false);
   
   // Analysis State
@@ -92,7 +96,6 @@ const App = () => {
     // Check File Size
     if (file.size > MAX_FILE_SIZE) {
       setUploadError(`File is too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Limit is 5MB.`);
-      // Reset input so user can select same file again if they want to trigger change
       e.target.value = '';
       return;
     }
@@ -107,14 +110,12 @@ const App = () => {
         return;
       }
 
-      // Basic check for binary content (null bytes often indicate binary)
       if (text.includes('\0')) {
         setUploadError("File appears to be binary. Please upload text-based files (.txt, .eml, .json, etc).");
         return;
       }
 
       setInputText(text);
-      // Automatically switch to text tab to review the content
       setActiveTab('text');
     };
 
@@ -129,11 +130,49 @@ const App = () => {
       console.error(err);
     }
     
-    // Reset input
     e.target.value = '';
   };
 
   const checkLocalApi = async (hash: string): Promise<ScanResult> => {
+    // Mode 1: Browser/Tablet (LocalStorage)
+    if (dbMode === 'browser') {
+      try {
+        // Simulate async lookup
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        const storedDb = localStorage.getItem('scamshield_threats');
+        const db = storedDb ? JSON.parse(storedDb) : {};
+        const match = db[hash];
+
+        if (match) {
+          return {
+            source: 'local',
+            status: 'malicious',
+            confidence: 100,
+            details: `Match found in on-device database: ${match.label || 'Known Threat'}`,
+            meta: match
+          };
+        } else {
+          return {
+            source: 'local',
+            status: 'clean',
+            confidence: 100,
+            details: 'No match in on-device database.',
+            meta: null
+          };
+        }
+      } catch (e: any) {
+        return {
+          source: 'local',
+          status: 'error',
+          confidence: 0,
+          details: 'Failed to access device storage.',
+          meta: { error: e.message }
+        };
+      }
+    }
+
+    // Mode 2: External Server (Python API)
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 3000); // 3s timeout
@@ -157,7 +196,7 @@ const App = () => {
           source: 'local',
           status: 'malicious',
           confidence: 100,
-          details: 'Match found in local threat database.',
+          details: 'Match found in remote threat database.',
           meta: data
         };
       } else {
@@ -165,7 +204,7 @@ const App = () => {
           source: 'local',
           status: 'clean',
           confidence: 100,
-          details: 'No match in local database.',
+          details: 'No match in remote database.',
           meta: data
         };
       }
@@ -174,7 +213,7 @@ const App = () => {
         source: 'local',
         status: 'error',
         confidence: 0,
-        details: e.name === 'AbortError' ? 'Connection timed out.' : 'API unreachable. Is the python server running?',
+        details: e.name === 'AbortError' ? 'Connection timed out.' : 'Remote API unreachable.',
         meta: { error: e.message }
       };
     }
@@ -194,7 +233,7 @@ const App = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: `Analyze this content for scams: \n\n"${content.substring(0, 10000)}"`, // Limit length
+        contents: `Analyze this content for scams: \n\n"${content.substring(0, 10000)}"`,
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
           responseMimeType: "application/json",
@@ -277,12 +316,25 @@ const App = () => {
   };
 
   const handleSetupDb = async () => {
-    try {
-      const res = await fetch(`${apiUrl}/setup`, { method: 'POST' });
-      if (res.ok) alert("Database initialized successfully!");
-      else alert("Failed to initialize database.");
-    } catch (e) {
-      alert("Could not connect to API for setup.");
+    if (dbMode === 'browser') {
+      // Setup Browser DB with test data
+      const defaults = {
+        // "scam"
+        "063e52109277083040436894565706911299967650766324600676442653303c": { label: "Test Signature: 'scam'", severity: "high" },
+        // "virus"
+        "d8981f2162601974d6f8d38787f7300c7e2b793666d997d983446045862d2952": { label: "Test Signature: 'virus'", severity: "critical" },
+      };
+      localStorage.setItem('scamshield_threats', JSON.stringify(defaults));
+      alert("On-device database initialized. Try scanning the text 'scam' or 'virus'.");
+    } else {
+      // Setup Server DB
+      try {
+        const res = await fetch(`${apiUrl}/setup`, { method: 'POST' });
+        if (res.ok) alert("Server database initialized successfully!");
+        else alert("Failed to initialize server database.");
+      } catch (e) {
+        alert("Could not connect to API for setup.");
+      }
     }
   };
 
@@ -335,27 +387,58 @@ const App = () => {
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="bg-slate-900 border-b border-slate-800">
+        <div className="bg-slate-900 border-b border-slate-800 animate-in slide-in-from-top-2">
           <div className="max-w-5xl mx-auto px-6 py-6 grid gap-6 md:grid-cols-2">
+            
+            {/* Database Mode Selection */}
             <div>
-              <label className="block text-xs uppercase tracking-wider text-slate-500 mb-2 font-bold">Local API Endpoint</label>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  value={apiUrl} 
-                  onChange={(e) => setApiUrl(e.target.value)}
-                  className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-emerald-500/50 transition-colors"
-                />
-                <button 
-                  onClick={handleSetupDb}
-                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded font-medium transition-colors"
+              <label className="block text-xs uppercase tracking-wider text-slate-500 mb-2 font-bold">Threat Database Mode</label>
+              <div className="flex bg-slate-950 p-1 rounded-lg border border-slate-800 mb-4">
+                <button
+                  onClick={() => setDbMode('browser')}
+                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-all ${dbMode === 'browser' ? 'bg-slate-800 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
                 >
-                  Init DB
+                  <Smartphone size={14} /> On-Device (Tablet)
+                </button>
+                <button
+                  onClick={() => setDbMode('server')}
+                  className={`flex-1 py-2 px-3 text-sm font-medium rounded-md flex items-center justify-center gap-2 transition-all ${dbMode === 'server' ? 'bg-slate-800 text-white shadow' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  <Server size={14} /> Remote Server
                 </button>
               </div>
-              <p className="mt-2 text-xs text-slate-500">
-                Ensure your local Python server is running and CORS is enabled for this origin.
-              </p>
+
+              {dbMode === 'server' ? (
+                <div>
+                   <label className="block text-xs text-slate-500 mb-2">Remote API Endpoint</label>
+                   <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      value={apiUrl} 
+                      onChange={(e) => setApiUrl(e.target.value)}
+                      className="flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-emerald-500/50"
+                    />
+                    <button onClick={handleSetupDb} className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm rounded transition-colors">Test</button>
+                   </div>
+                </div>
+              ) : (
+                <div className="bg-emerald-500/5 border border-emerald-500/10 rounded p-3">
+                  <p className="text-xs text-emerald-400 mb-2 flex items-center gap-2">
+                    <CheckCircle size={12}/> Running locally. No server required.
+                  </p>
+                  <button 
+                    onClick={handleSetupDb}
+                    className="w-full py-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 text-sm rounded font-medium transition-colors"
+                  >
+                    Initialize Test Database
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="text-xs text-slate-500">
+              <p className="mb-2"><strong className="text-slate-400">On-Device Mode:</strong> Uses local browser storage to check content hashes. Ideal for tablets and offline usage.</p>
+              <p><strong className="text-slate-400">Remote Server Mode:</strong> Connects to a Python backend for enterprise-grade threat lookup.</p>
             </div>
           </div>
         </div>
@@ -499,19 +582,21 @@ const App = () => {
             </div>
           </div>
 
-          {/* Local DB Result */}
+          {/* Local/Device DB Result */}
           <div className={`bg-slate-900 border rounded-lg p-4 transition-colors ${state.localResult?.status === 'malicious' ? 'border-rose-500/50 bg-rose-950/10' : 'border-slate-800'}`}>
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2 text-slate-300">
-                <Database size={16} />
-                <span className="font-semibold text-sm">Local Database</span>
+                {dbMode === 'browser' ? <Smartphone size={16}/> : <Database size={16} />}
+                <span className="font-semibold text-sm">
+                  {dbMode === 'browser' ? 'On-Device Database' : 'Remote Database'}
+                </span>
               </div>
               {renderStatusBadge(state.localResult)}
             </div>
             <p className="text-sm text-slate-400">
-              {state.localResult?.details || 'Checks against your local API threat list.'}
+              {state.localResult?.details || 'Checks against known threat signatures.'}
             </p>
-            {state.localResult?.status === 'error' && (
+            {state.localResult?.status === 'error' && dbMode === 'server' && (
                <p className="text-xs text-rose-400 mt-2">
                  Check if backend is running on {apiUrl}
                </p>
